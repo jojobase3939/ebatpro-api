@@ -1,4 +1,5 @@
 
+
 const express = require('express');
 const puppeteer = require('puppeteer-core');
 
@@ -39,7 +40,7 @@ async function getFormInputs(page) {
 }
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'eBatPro Price API', version: '1.2.1' });
+  res.json({ status: 'ok', service: 'eBatPro Price API', version: '1.2.2' });
 });
 
 app.get('/debug-login', async (req, res) => {
@@ -70,10 +71,10 @@ app.get('/debug-login', async (req, res) => {
   }
 });
 
-app.post('/recherche', async (req, res) => {
+app.post('/debug-search', async (req, res) => {
   const { terme, username, password, api_key } = req.body;
   if (api_key !== API_KEY) return res.status(401).json({ error: 'Clé API invalide' });
-  if (!terme || !username || !password) return res.status(400).json({ error: 'Paramètres manquants: terme, username, password, api_key' });
+  if (!terme || !username || !password) return res.status(400).json({ error: 'terme, username, password, api_key requis' });
 
   let browser;
   try {
@@ -82,72 +83,10 @@ app.post('/recherche', async (req, res) => {
     page.setDefaultTimeout(30000);
     await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-    console.log(`[LOGIN] ${username.split('@')[0]}... terme="${terme}"`);
     await page.goto('https://www.ebatpro.fr/login', { waitUntil: 'networkidle2', timeout: 25000 });
     await new Promise(r => setTimeout(r, 2000));
-
     await page.waitForSelector('input[name="username"]', { timeout: 8000 });
-
     await page.click('input[name="username"]', { clickCount: 3 });
     await page.type('input[name="username"]', username, { delay: 40 });
-    console.log(`[LOGIN] Username rempli`);
-
     await page.click('input[name="password"]', { clickCount: 3 });
-    await page.type('input[name="password"]', password, { delay: 40 });
-    console.log(`[LOGIN] Password rempli`);
-
-    const navPromise = page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => null);
-    await page.click('button[type="submit"]');
-    await navPromise;
-    await new Promise(r => setTimeout(r, 2000));
-
-    const urlApresLogin = page.url();
-    console.log(`[LOGIN] URL après: ${urlApresLogin}`);
-
-    if (urlApresLogin.includes('/login')) {
-      await browser.close();
-      return res.status(401).json({ error: 'Login eBatPro échoué - vérifier identifiant/mot de passe', url_apres: urlApresLogin });
-    }
-
-    console.log(`[SEARCH] "${terme}"`);
-    await page.goto(`https://www.ebatpro.fr/search?term=${encodeURIComponent(terme)}`, { waitUntil: 'domcontentloaded' });
-
-    try {
-      await page.waitForSelector('[class*="ProductCard"][class*="__ProductCard"]', { timeout: 12000 });
-    } catch {
-      await browser.close();
-      return res.json({ terme_recherche: terme, nb_resultats: 0, produits: [], message: `Aucun produit trouvé pour "${terme}"`, source: 'eBatPro_live' });
-    }
-
-    const produits = await page.evaluate(() => {
-      const cards = [...document.querySelectorAll('[class*="ProductCard"][class*="__ProductCard"]')];
-      return cards.slice(0, 10).map(card => {
-        const designation = card.querySelector('[class*="text-heading"], h2, h3, [class*="heading"]')?.textContent?.trim() || '';
-        const refs = [...card.querySelectorAll('[class*="text-annotation"], [class*="annotation"]')].map(el => el.textContent.trim());
-        const code = refs.find(r => /^[A-Z0-9]{3,}/.test(r)) || refs[0] || '';
-        const ref_fabricant = refs.find(r => r !== code) || '';
-        let prix_public_ht = null, prix_net_ht = null;
-        [...card.querySelectorAll('[class*="text-price"], [class*="price"]')].forEach(el => {
-          const val = parseFloat((el.innerText || '').replace(/\s/g, '').replace(',', '.').replace(/[^\d.]/g, '')) || null;
-          const label = (el.previousElementSibling?.textContent || el.closest('[class*="price"]')?.previousElementSibling?.textContent || '').toLowerCase();
-          if (label.includes('public') || label.includes('catalogue')) prix_public_ht = val;
-          else if (label.includes('net') || label.includes('pro')) prix_net_ht = val;
-          else if (!prix_public_ht && val) prix_public_ht = val;
-        });
-        const lien = card.querySelector('a[href*="/product/"]')?.getAttribute('href') || '';
-        return { designation, code, ref_fabricant, prix_public_ht, prix_net_ht, lien };
-      }).filter(p => p.code || p.designation);
-    });
-
-    console.log(`[RESULT] ${produits.length} produits pour "${terme}"`);
-    res.json({ terme_recherche: terme, nb_resultats: produits.length, produits, source: 'eBatPro_live' });
-
-  } catch (error) {
-    console.error(`[ERROR] ${error.message}`);
-    res.status(500).json({ error: error.message, terme_recherche: terme });
-  } finally {
-    await browser?.close();
-  }
-});
-
-app.listen(PORT, () => console.log(`✅ eBatPro API v1.2.1 - port ${PORT}`));
+    await page.type('input[name="password"]', password, { delay:
