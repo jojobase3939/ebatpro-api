@@ -19,7 +19,7 @@ async function launchBrowser() {
 }
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'eBatPro Price API', version: '1.3.0' });
+  res.json({ status: 'ok', service: 'eBatPro Price API', version: '1.4.0' });
 });
 
 app.post('/recherche', async (req, res) => {
@@ -58,57 +58,39 @@ app.post('/recherche', async (req, res) => {
     await page.goto('https://www.ebatpro.fr/search?term=' + encodeURIComponent(terme), { waitUntil: 'domcontentloaded' });
     await new Promise(r => setTimeout(r, 5000));
 
-    // Diagnostique les classes CSS de la page
-    const pageInfo = await page.evaluate(() => {
-      const classes = new Set();
-      document.querySelectorAll('*').forEach(el => {
-        if (el.className && typeof el.className === 'string') {
-          el.className.split(' ').forEach(c => {
-            if (c.length > 2) classes.add(c);
-          });
-        }
-      });
-      const cardClasses = [...classes].filter(c =>
-        c.toLowerCase().includes('card') ||
-        c.toLowerCase().includes('product') ||
-        c.toLowerCase().includes('item') ||
-        c.toLowerCase().includes('result')
-      );
-      return {
-        cardClasses: cardClasses.slice(0, 30),
-        bodyText: document.body.innerText.slice(0, 400),
-        totalElements: document.querySelectorAll('*').length
-      };
-    });
-
-    console.log('[SEARCH] Classes trouvées:', JSON.stringify(pageInfo.cardClasses));
-
-    // Trouver les cartes produit avec les vraies classes CSS
+    // EXTRACTION - sélecteurs confirmés par analyse HTML réelle
     const produits = await page.evaluate(() => {
-      // Chercher avec différents sélecteurs possibles
-      let cards = document.querySelectorAll('[class*="ProductCard"]');
-      if (!cards.length) cards = document.querySelectorAll('[class*="product-card"], [class*="productCard"], [class*="product_card"]');
-      if (!cards.length) cards = document.querySelectorAll('[class*="ItemCard"], [class*="item-card"]');
-      if (!cards.length) cards = document.querySelectorAll('article');
+      // Cartes racines uniquement - data-qa-id = code produit !
+      const cards = [...document.querySelectorAll('div[data-qa-id][class*="ProductCard"]')];
 
-      return [...cards].slice(0, 10).map(card => {
-        const texte = card.innerText || '';
-        const prix = texte.match(/(\d+[,.\s]\d+)\s*€/g) || [];
-        return {
-          designation: card.querySelector('h2, h3, h4, [class*="title"], [class*="name"]')?.textContent?.trim() || texte.slice(0, 80),
-          prix_trouves: prix,
-          html_debut: card.outerHTML.slice(0, 300)
-        };
-      });
+      return cards.slice(0, 10).map(card => {
+        const code = card.getAttribute('data-qa-id') || '';
+        const brand = card.querySelector('[data-qa-id="product-brand"]')?.textContent?.trim() || '';
+        const name = card.querySelector('[data-qa-id="product-name"]')?.textContent?.trim() || '';
+        const designation = brand ? brand + ' - ' + name : name;
+        const lien = card.querySelector('a[href*="/product/"]')?.getAttribute('href') || '';
+
+        // Extraction prix par label texte (format: "Prix public H.T.\n7 642,00 €")
+        let prix_public_ht = null, prix_net_ht = null;
+        const lignes = (card.innerText || '').split('\n').map(l => l.trim()).filter(Boolean);
+
+        for (let i = 1; i < lignes.length; i++) {
+          // Chercher valeur "7 642,00 €" ou "4 126,68 €"
+          const prixMatch = lignes[i].match(/^(\d[\d\s]*,\d{2})\s*€?$/);
+          if (prixMatch) {
+            const valeur = parseFloat(prixMatch[1].replace(/\s/g, '').replace(',', '.'));
+            const label = (lignes[i - 1] || '').toLowerCase();
+            if (label.includes('public')) prix_public_ht = valeur;
+            else if (label.includes('net')) prix_net_ht = valeur;
+          }
+        }
+
+        return { code, designation, ref_fabricant: '', prix_public_ht, prix_net_ht, lien };
+      }).filter(p => p.code && p.designation);
     });
 
-    res.json({
-      terme_recherche: terme,
-      nb_resultats: produits.length,
-      produits,
-      diagnostic: pageInfo,
-      source: 'eBatPro_live'
-    });
+    console.log('[RESULT] ' + produits.length + ' produits, prix public: ' + produits[0]?.prix_public_ht);
+    res.json({ terme_recherche: terme, nb_resultats: produits.length, produits, source: 'eBatPro_live' });
 
   } catch (error) {
     console.error('[ERROR] ' + error.message);
@@ -118,4 +100,4 @@ app.post('/recherche', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log('eBatPro API v1.3.0 port ' + PORT));
+app.listen(PORT, () => console.log('eBatPro API v1.4.0 port ' + PORT));
